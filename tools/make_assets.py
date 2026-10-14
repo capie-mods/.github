@@ -1,10 +1,20 @@
 """Draws the organization avatar, the profile banner and the status badges.
 
-Every picture follows the CAPIE design system (capie-design: DESIGN-SYSTEM.md, tokens.json
-1.2.0). The avatar is the CAPIE connector mark (three brass bars beside a field-ink plate with
-a steel bevel) as drawn on the CAPIE switch mod thumbnail, centred on a panel-umber square and
-sized so that GitHub's circular crop leaves it whole. Flat fills only: no gradients, glow or
-shadows.
+The mark is "Overprint". When a state changed its name, post offices kept the old stamps and
+overprinted them: parallel bars over the old country name, the new name printed above. CAPIE
+and Rename Anything do the same to Hearts of Iron IV: the game's own object stays, a new name
+goes over it. The stamp is parchment with an olive printed field (khaki frame and old name);
+the strike bars are vermilion and the new name is brass. The whole overprint sits at a slight
+angle, as hand-fed overprints did, but stays near horizontal so it never reads as a ban sign.
+
+Colours come from the CAPIE design system (capie-design: tokens.json 1.2.0). Vermilion
+(#b8432e) is one proposed brand-only extension for the overprint ink; it never marks state.
+Flat fills only: no gradients, glow or shadows. One geometry feeds both the SVG and the PNG.
+
+Two drawings:
+    bold    few large notches, heavy bars, no inner frame. The GitHub avatar: GitHub shows it
+            mostly at 20 to 48 px, where finer perforation turns to noise.
+    detail  fine perforation and a khaki frame, for 128 px and up (banner tile, large prints)
 
 Usage:
     python tools/make_assets.py           # writes profile/assets/*
@@ -15,7 +25,9 @@ from __future__ import annotations
 
 import argparse
 import io
+import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -40,106 +52,167 @@ C = {
     "header-amber": "#ffbd00",
     "go-green": "#7db35a",
     "caution-orange": "#ff7019",
+    # Proposed brand-only extension: overprint ink. Never a state colour.
+    "vermilion": "#b8432e",
     # Light page scheme of the documentation sites (sites/shared/theme/stylesheets/theme.css).
     "light-fg": "#1d1a17",
     "light-fg-2": "#4a443b",
 }
-"""Colour tokens (tokens.json 1.2.0) and the two derived light-scheme text colours."""
+"""Colour tokens (tokens.json 1.2.0), the vermilion extension and two light-scheme colours."""
 
-# Connector mark on the 512 px grid of the CAPIE switch mod thumbnail. The bars are 20 units
-# tall instead of 16 so that they stay 3 px apart and visible at the 40 px avatar size.
-PLATE = (92.0, 106.0, 196.0, 266.0)
-"""Plate rectangle (left, top, right, bottom)."""
+GRID = 500
+"""Edge of the drawing grid; the avatar is drawn 1:1 on it."""
 
-BAR_X = (48.0, 92.0)
-"""Left and right edge of the three bars."""
-
-BAR_CENTRES = (146.0, 186.0, 226.0)
-"""Vertical centres of the three bars."""
-
-BAR_HEIGHT = 20.0
-"""Bar height."""
-
-BEVEL = 4.0
-"""Steel bevel stroke of the plate."""
-
-MARK_CENTRE = ((BAR_X[0] + PLATE[2]) / 2, (PLATE[1] + PLATE[3]) / 2)
-"""Centre of the mark's bounding box."""
-
-AVATAR = 500
-"""Avatar edge in pixels (GitHub recommends at least 500 x 500)."""
-
-AVATAR_SCALE = 1.9
-"""Mark scale on the avatar: the bounding box corners sit at 83 % of the crop radius."""
+TILT = -7.0
+"""Overprint angle in degrees (negative rises to the right). Kept under 10 degrees."""
 
 
-def mark_svg(scale: float, cx: float, cy: float) -> str:
-    """Returns the connector mark as SVG elements centred on (cx, cy).
+@dataclass(frozen=True)
+class Shape:
+    """One flat shape on the 500 grid.
 
-    Args:
-        scale: Factor from the thumbnail grid to the target.
-        cx: Horizontal centre on the target.
-        cy: Vertical centre on the target.
-
-    Returns:
-        A <g> element.
+    Attributes:
+        kind: "rect" or "circle".
+        colour: Token name.
+        a: Rect left or circle centre x.
+        b: Rect top or circle centre y.
+        c: Rect right or circle radius.
+        d: Rect bottom (unused for circles).
+        tilted: True when the shape belongs to the overprint and turns by TILT.
     """
-    tx = cx - MARK_CENTRE[0] * scale
-    ty = cy - MARK_CENTRE[1] * scale
-    half = BEVEL / 2
-    bars = "".join(
-        f'<rect x="{BAR_X[0]:g}" y="{c - BAR_HEIGHT / 2:g}" width="{BAR_X[1] - BAR_X[0]:g}" '
-        f'height="{BAR_HEIGHT:g}" fill="{C["brass"]}"/>'
-        for c in BAR_CENTRES
+
+    kind: str
+    colour: str
+    a: float
+    b: float
+    c: float
+    d: float = 0.0
+    tilted: bool = False
+
+
+@dataclass(frozen=True)
+class Variant:
+    """Proportions of one drawing."""
+
+    stamp: tuple[float, float, float, float]
+    teeth_x: int
+    teeth_y: int
+    tooth_r: float
+    margin: float
+    frame: float
+    bar: float
+    bar_gap: float
+    name_h: float
+
+
+DETAIL = Variant((116, 86, 384, 414), 8, 10, 12.5, 26, 5, 15, 13, 46)
+"""Finely perforated stamp for 128 px and up."""
+
+BOLD = Variant((112, 82, 388, 418), 4, 5, 22, 30, 0, 26, 20, 64)
+"""Bold stamp for the avatar and every size under 128 px."""
+
+
+def shapes(v: Variant) -> list[Shape]:
+    """Builds the mark as a list of flat shapes, back to front."""
+    x0, y0, x1, y1 = v.stamp
+    out = [Shape("rect", "parchment", x0, y0, x1, y1)]
+    for i in range(v.teeth_x + 1):
+        x = x0 + (x1 - x0) * i / v.teeth_x
+        out += [Shape("circle", "panel-umber", x, y0, v.tooth_r)]
+        out += [Shape("circle", "panel-umber", x, y1, v.tooth_r)]
+    for i in range(1, v.teeth_y):
+        y = y0 + (y1 - y0) * i / v.teeth_y
+        out += [Shape("circle", "panel-umber", x0, y, v.tooth_r)]
+        out += [Shape("circle", "panel-umber", x1, y, v.tooth_r)]
+    ix0, iy0, ix1, iy1 = x0 + v.margin, y0 + v.margin, x1 - v.margin, y1 - v.margin
+    out.append(Shape("rect", "olive-button", ix0, iy0, ix1, iy1))
+    if v.frame:
+        f = 11
+        for r in (
+            (ix0 + f, iy0 + f, ix1 - f, iy0 + f + v.frame),
+            (ix0 + f, iy1 - f - v.frame, ix1 - f, iy1 - f),
+            (ix0 + f, iy0 + f, ix0 + f + v.frame, iy1 - f),
+            (ix1 - f - v.frame, iy0 + f, ix1 - f, iy1 - f),
+        ):
+            out.append(Shape("rect", "khaki", *r))
+    # Old country name, printed in khaki near the foot of the stamp.
+    old_y = iy1 - 70 if v.frame else iy1 - 74
+    old_h = 22 if v.frame else 30
+    out.append(Shape("rect", "khaki", ix0 + 26, old_y, ix1 - 26, old_y + old_h))
+    # Overprint: two parallel strike bars across the old name, wider than the printed field,
+    # and the new name above them.
+    mid = old_y + old_h / 2
+    top = mid - v.bar_gap / 2 - v.bar
+    out.append(Shape("rect", "vermilion", x0 + 4, top, x1 - 4, top + v.bar, tilted=True))
+    bot = mid + v.bar_gap / 2
+    out.append(Shape("rect", "vermilion", x0 + 4, bot, x1 - 4, bot + v.bar, tilted=True))
+    name_bottom = top - (40 if v.frame else 34)
+    out.append(
+        Shape("rect", "brass", ix0 + 20, name_bottom - v.name_h, ix1 - 20, name_bottom, tilted=True)
     )
+    return out
+
+
+def turn(x: float, y: float) -> tuple[float, float]:
+    """Rotates a point of the grid by TILT around the grid centre."""
+    t = math.radians(TILT)
+    cx = cy = GRID / 2
+    dx, dy = x - cx, y - cy
+    return (cx + dx * math.cos(t) - dy * math.sin(t), cy + dx * math.sin(t) + dy * math.cos(t))
+
+
+def svg_shapes(v: Variant) -> str:
+    """Returns the mark as SVG elements on the 500 grid."""
+    plain: list[str] = []
+    tilted: list[str] = []
+    for s in shapes(v):
+        if s.kind == "circle":
+            el = f'<circle cx="{s.a:g}" cy="{s.b:g}" r="{s.c:g}" fill="{C[s.colour]}"/>'
+        else:
+            el = (
+                f'<rect x="{s.a:g}" y="{s.b:g}" width="{s.c - s.a:g}" height="{s.d - s.b:g}" '
+                f'fill="{C[s.colour]}"/>'
+            )
+        (tilted if s.tilted else plain).append(el)
+    half = GRID / 2
     return (
-        f'<g transform="translate({tx:g} {ty:g}) scale({scale:g})">'
-        f'<rect x="{PLATE[0] + half:g}" y="{PLATE[1] + half:g}" '
-        f'width="{PLATE[2] - PLATE[0] - BEVEL:g}" height="{PLATE[3] - PLATE[1] - BEVEL:g}" rx="2" '
-        f'fill="{C["field-ink"]}" stroke="{C["steel-bevel"]}" stroke-width="{BEVEL:g}"/>'
-        f"{bars}</g>"
+        "".join(plain)
+        + f'<g transform="rotate({TILT:g} {half:g} {half:g})">'
+        + "".join(tilted)
+        + "</g>"
     )
 
 
-def avatar_svg() -> str:
-    """Returns the avatar source SVG."""
-    half = AVATAR / 2
+def avatar_svg(v: Variant, label: str) -> str:
+    """Returns a square avatar SVG with a panel-umber ground."""
     return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {AVATAR} {AVATAR}" '
-        f'width="{AVATAR}" height="{AVATAR}" role="img" aria-label="CAPIE">\n'
-        "  <!-- capie-mods avatar: the CAPIE connector mark on panel-umber. Tokens: capie-design "
-        "tokens.json 1.2.0. Kept inside the circle GitHub crops avatars to. -->\n"
-        f'  <rect width="{AVATAR}" height="{AVATAR}" fill="{C["panel-umber"]}"/>\n'
-        f"  {mark_svg(AVATAR_SCALE, half, half)}\n"
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {GRID} {GRID}" '
+        f'width="{GRID}" height="{GRID}" role="img" aria-label="capie-mods">\n'
+        f"  <!-- capie-mods mark, Overprint ({label}). Generated by tools/make_assets.py. -->\n"
+        f'  <rect width="{GRID}" height="{GRID}" fill="{C["panel-umber"]}"/>\n'
+        f"  {svg_shapes(v)}\n"
         "</svg>\n"
     )
 
 
-def avatar_png() -> bytes:
-    """Draws the avatar PNG with 4x supersampling from the same geometry as the SVG."""
+def avatar_png(v: Variant, size: int) -> bytes:
+    """Draws the avatar PNG with 4x supersampling from the same shapes as the SVG."""
     ss = 4
-    s = AVATAR_SCALE * ss
-    tx = AVATAR * ss / 2 - MARK_CENTRE[0] * s
-    ty = AVATAR * ss / 2 - MARK_CENTRE[1] * s
-
-    def at(x: float, y: float) -> tuple[int, int]:
-        return (round(tx + x * s), round(ty + y * s))
-
-    img = Image.new("RGB", (AVATAR * ss, AVATAR * ss), C["panel-umber"])
+    k = size * ss / GRID
+    img = Image.new("RGB", (size * ss, size * ss), C["panel-umber"])
     pen = ImageDraw.Draw(img)
-    pen.rounded_rectangle(
-        (*at(PLATE[0], PLATE[1]), *at(PLATE[2], PLATE[3])),
-        radius=round(2 * s),
-        fill=C["field-ink"],
-        outline=C["steel-bevel"],
-        width=round(BEVEL * s),
-    )
-    for c in BAR_CENTRES:
-        pen.rectangle(
-            (*at(BAR_X[0], c - BAR_HEIGHT / 2), *at(BAR_X[1], c + BAR_HEIGHT / 2)),
-            fill=C["brass"],
-        )
-    img = img.resize((AVATAR, AVATAR), Image.Resampling.LANCZOS)
+    for s in shapes(v):
+        if s.kind == "circle":
+            pen.ellipse(
+                ((s.a - s.c) * k, (s.b - s.c) * k, (s.a + s.c) * k, (s.b + s.c) * k),
+                fill=C[s.colour],
+            )
+        elif s.tilted:
+            corners = [turn(s.a, s.b), turn(s.c, s.b), turn(s.c, s.d), turn(s.a, s.d)]
+            pen.polygon([(x * k, y * k) for x, y in corners], fill=C[s.colour])
+        else:
+            pen.rectangle((s.a * k, s.b * k, s.c * k - 1, s.d * k - 1), fill=C[s.colour])
+    img = img.resize((size, size), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
     img.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
@@ -154,24 +227,20 @@ def banner_svg(*, dark: bool) -> str:
 
     The background is transparent so the banner sits on GitHub's own page colour. The mark
     keeps its panel-umber tile in both schemes, as diagrams keep their own canvas.
-
-    Args:
-        dark: True for the dark page scheme.
-
-    Returns:
-        The SVG document.
     """
     name = C["parchment"] if dark else C["light-fg"]
     sub = C["khaki"] if dark else C["light-fg-2"]
     tile = 128
+    k = tile / GRID
     rim = "" if dark else f' stroke="{C["panel-rim"]}" stroke-width="1"'
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 160" width="880" height="160" '
         'role="img" aria-labelledby="t">\n'
-        "  <title id=\"t\">CAPIE (Cyprian's API Extender) for Hearts of Iron IV</title>\n"
+        "  <title id=\"t\">capie-mods: CAPIE (Cyprian's API Extender) and the Hearts of Iron IV "
+        "mods built on it</title>\n"
         f'  <rect x="0.5" y="16.5" width="{tile - 1}" height="{tile - 1}" rx="6" '
         f'fill="{C["panel-umber"]}"{rim}/>\n'
-        f"  {mark_svg(tile / AVATAR * AVATAR_SCALE, tile / 2, 16 + tile / 2)}\n"
+        f'  <g transform="translate(0 16) scale({k:g})">{svg_shapes(DETAIL)}</g>\n'
         f'  <text x="160" y="86" fill="{name}" style="font:700 60px {FONT};'
         'letter-spacing:.01em">CAPIE</text>\n'
         f'  <text x="162" y="124" fill="{sub}" style="font:400 22px {FONT}">'
@@ -235,8 +304,10 @@ def plan() -> dict[Path, bytes]:
     """Returns every output file with its bytes."""
     status, _ = status_svg()
     return {
-        ASSETS / "org-avatar.svg": avatar_svg().encode(),
-        ASSETS / "org-avatar.png": avatar_png(),
+        ASSETS / "org-avatar.svg": avatar_svg(BOLD, "bold, the avatar").encode(),
+        ASSETS / "org-avatar.png": avatar_png(BOLD, GRID),
+        ASSETS / "org-mark-detail.svg": avatar_svg(DETAIL, "detail, 128 px and up").encode(),
+        ASSETS / "org-mark-detail.png": avatar_png(DETAIL, GRID),
         ASSETS / "banner-dark.svg": banner_svg(dark=True).encode(),
         ASSETS / "banner-light.svg": banner_svg(dark=False).encode(),
         ASSETS / "status.svg": status.encode(),
@@ -258,7 +329,6 @@ def main() -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             print(f"Wrote {path.relative_to(ROOT)} ({len(data)} bytes)")
-    print(f"status.svg width: {status_svg()[1]} px")
     return 1 if stale else 0
 
 
