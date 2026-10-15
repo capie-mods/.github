@@ -15,6 +15,13 @@ built on it.
 
 <img src="assets/rename-anything-hero.jpg" alt="Hearts of Iron IV diplomacy screen with a subject renamed to Province of Rizzia, its leader Rizzler King and its Rizz Party; the map shows the new name across Canada." width="880">
 
+<p>
+  <img src="assets/rename-anything-country-flag.jpg" alt="Left: the Politics panel with a Name tab, the country name Skbidi Kingdom and the adjective Skibidish in text fields. Right: the Flag tab, a list of flags with letter filters." width="436">
+  <img src="assets/rename-anything-factions.jpg" alt="Left: the diplomatic action Rename faction and a dialog asking to open the editor for Allies. Right: the faction map mode with the renamed faction The Rizzlers." width="436">
+</p>
+
+<img src="assets/rename-anything-map.jpg" alt="Left: the map of East Africa labelled Skbidi Kingdom, a province tooltip naming the owner Skbidi Kingdom. Right: the map of England with the city Skibidi London." width="880">
+
 ## Repositories
 
 | Repository | What is in it |
