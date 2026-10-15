@@ -22,6 +22,8 @@ built on it.
 
 <img src="assets/rename-anything-map.jpg" alt="Left: the map of East Africa labelled Skbidi Kingdom, a province tooltip naming the owner Skbidi Kingdom. Right: the map of England with the city Skibidi London." width="880">
 
+Websites: [Rename Anything](https://capie-mods.github.io/rename-anything/) and [CAPIE](https://capie-mods.github.io/capie/).
+
 ## Repositories
 
 | Repository | What is in it |
